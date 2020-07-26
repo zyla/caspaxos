@@ -35,6 +35,7 @@ use crate::{
 /// }
 ///
 /// fn main() {
+///     #[cfg(feature = "pretty_backtrace")]
 ///     color_backtrace::install();
 ///
 ///     let n_servers = 5;
