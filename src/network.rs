@@ -14,6 +14,7 @@ use std::{
 
 use async_channel::Receiver;
 use async_mutex::Mutex;
+use futures::future::FutureExt;
 use futures_channel::oneshot::Receiver as OneshotReceiver;
 use smol::{Task, Timer};
 use uuid::Uuid;
@@ -45,23 +46,19 @@ impl Future for ResponseHandle {
     type Output = io::Result<Response>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        unsafe {
-            if let Poll::Ready(response) =
-                Pin::new_unchecked(&mut self.0).poll(cx)
-            {
-                let response = if let Ok(response) = response {
-                    Ok(response)
-                } else {
-                    Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "request timed out",
-                    ))
-                };
-
-                Poll::Ready(response)
+        if let Poll::Ready(response) = self.0.poll_unpin(cx) {
+            let response = if let Ok(response) = response {
+                Ok(response)
             } else {
-                Poll::Pending
-            }
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "request timed out",
+                ))
+            };
+
+            Poll::Ready(response)
+        } else {
+            Poll::Pending
         }
     }
 }
@@ -81,13 +78,9 @@ impl Future for TimeoutLimitedBroadcast {
         let mut to_remove = vec![];
         let mut to_complete = vec![];
         for (idx, response) in self.pending.iter_mut().enumerate() {
-            unsafe {
-                if let Poll::Ready(Ok(response)) =
-                    Pin::new_unchecked(response).poll(cx)
-                {
-                    to_remove.push(idx);
-                    to_complete.push(response);
-                }
+            if let Poll::Ready(Ok(response)) = response.poll_unpin(cx) {
+                to_remove.push(idx);
+                to_complete.push(response);
             }
         }
 
@@ -101,12 +94,8 @@ impl Future for TimeoutLimitedBroadcast {
             return Poll::Ready(replace(&mut self.complete, vec![]));
         }
 
-        unsafe {
-            if let Poll::Ready(_) =
-                Pin::new_unchecked(&mut self.timeout).poll(cx)
-            {
-                return Poll::Ready(replace(&mut self.complete, vec![]));
-            }
+        if let Poll::Ready(_) = self.timeout.poll_unpin(cx) {
+            return Poll::Ready(replace(&mut self.complete, vec![]));
         }
         Poll::Pending
     }
